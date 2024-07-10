@@ -77,41 +77,52 @@ class CrewAgentExecutor(AgentExecutor, CrewAgentExecutorMixin):
         # We now enter the agent loop (until it returns something).
         while self._should_continue(self.iterations, time_elapsed):
             if not self.request_within_rpm_limit or self.request_within_rpm_limit():
-                next_step_output = self._take_next_step(
-                    name_to_tool_map,
-                    color_mapping,
-                    inputs,
-                    intermediate_steps,
-                    run_manager=run_manager,
-                )
-
-                if self.step_callback:
-                    self.step_callback(next_step_output)
-
-                if isinstance(next_step_output, AgentFinish):
-                    # Creating long term memory
-                    create_long_term_memory = threading.Thread(
-                        target=self._create_long_term_memory, args=(next_step_output,)
-                    )
-                    create_long_term_memory.start()
-
-                    return self._return(
-                        next_step_output, intermediate_steps, run_manager=run_manager
+                try:
+                    next_step_output = self._take_next_step(
+                        name_to_tool_map,
+                        color_mapping,
+                        inputs,
+                        intermediate_steps,
+                        run_manager=run_manager,
                     )
 
-                intermediate_steps.extend(next_step_output)
+                    if self.step_callback:
+                        self.step_callback(next_step_output)
 
-                if len(next_step_output) == 1:
-                    next_step_action = next_step_output[0]
-                    # See if tool should return directly
-                    tool_return = self._get_tool_return(next_step_action)
-                    if tool_return is not None:
+                    if isinstance(next_step_output, AgentFinish):
+                        # Creating long term memory
+                        create_long_term_memory = threading.Thread(
+                            target=self._create_long_term_memory, args=(next_step_output,)
+                        )
+                        create_long_term_memory.start()
+
                         return self._return(
-                            tool_return, intermediate_steps, run_manager=run_manager
+                            next_step_output, intermediate_steps, run_manager=run_manager
                         )
 
-                self.iterations += 1
-                time_elapsed = time.time() - start_time
+                    intermediate_steps.extend(next_step_output)
+
+                    if len(next_step_output) == 1:
+                        next_step_action = next_step_output[0]
+                        # See if tool should return directly
+                        tool_return = self._get_tool_return(next_step_action)
+                        if tool_return is not None:
+                            return self._return(
+                                tool_return, intermediate_steps, run_manager=run_manager
+                            )
+
+                    self.iterations += 1
+                    time_elapsed = time.time() - start_time
+
+                except Exception as e:
+                    if "context_length_exceeded" in str(e):
+                        if intermediate_steps:
+                            intermediate_steps.pop()
+                        print("Context length exceeded. Removed last intermediate step and continuing.")
+                        continue
+                    else:
+                        raise
+
         output = self.agent.return_stopped_response(
             self.early_stopping_method, intermediate_steps, **inputs
         )
